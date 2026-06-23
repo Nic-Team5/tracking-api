@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: tracking-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
