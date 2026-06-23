@@ -1,8 +1,0 @@
-fastapi
-uvicorn
-gunicorn
-httpx
-beautifulsoup4
-lxml
-python-dateutil
-pydantic
