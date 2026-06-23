@@ -1,7 +1,7 @@
 {
   "name": "tracking-api",
   "version": "1.0.0",
-  "description": "API tracking curieri România",
+  "description": "API pentru tracking AWB Romania (Sameday, Fan Courier, Cargus, DPD)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
