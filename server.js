@@ -15,13 +15,40 @@ app.use((req, res, next) => {
 app.use(express.json());
 
 // ==========================================
-// ENDPOINT - Tracking AWB
+// ENDPOINT - Tracking AWB (cu curier opțional)
 // ==========================================
 app.get('/track/:awb', async (req, res) => {
     const awb = req.params.awb.toUpperCase().trim();
+    const courier = req.query.courier; // Optional: ?courier=sameday
     
     try {
-        const result = await trackAll(awb);
+        const result = await trackAll(awb, courier);
+        res.json(result);
+    } catch (error) {
+        res.json({
+            success: false,
+            awb: awb,
+            error: error.message,
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// ==========================================
+// ENDPOINT - Tracking cu POST (pentru curier specific)
+// ==========================================
+app.post('/track', async (req, res) => {
+    const { awb, courier } = req.body;
+    
+    if (!awb) {
+        return res.json({
+            success: false,
+            error: 'AWB este obligatoriu'
+        });
+    }
+    
+    try {
+        const result = await trackAll(awb.toUpperCase().trim(), courier);
         res.json(result);
     } catch (error) {
         res.json({
@@ -36,14 +63,52 @@ app.get('/track/:awb', async (req, res) => {
 // ==========================================
 // FUNCȚIA - Încearcă toți curierii
 // ==========================================
-async function trackAll(awb) {
+async function trackAll(awb, specifiedCourier = null) {
     const couriers = [
-        { name: 'Sameday', func: trackSameday },
-        { name: 'Fan Courier', func: trackFan },
-        { name: 'Cargus', func: trackCargus },
-        { name: 'DPD', func: trackDpd }
+        { name: 'Sameday', slug: 'sameday', func: trackSameday },
+        { name: 'Fan Courier', slug: 'fan', func: trackFan },
+        { name: 'Cargus', slug: 'cargus', func: trackCargus },
+        { name: 'DPD', slug: 'dpd', func: trackDpd }
     ];
     
+    // Dacă s-a specificat un curier, încearcă doar pe acela
+    if (specifiedCourier) {
+        const found = couriers.find(c => 
+            c.slug === specifiedCourier.toLowerCase() || 
+            c.name.toLowerCase() === specifiedCourier.toLowerCase()
+        );
+        if (found) {
+            try {
+                const result = await found.func(awb);
+                if (result.events && result.events.length > 0) {
+                    return {
+                        success: true,
+                        awb: awb,
+                        courier: found.name,
+                        status: result.status || 'Necunoscut',
+                        events: result.events,
+                        lastUpdate: new Date().toISOString()
+                    };
+                }
+            } catch (error) {
+                return {
+                    success: false,
+                    awb: awb,
+                    courier: found.name,
+                    error: error.message,
+                    hint: `Verifică AWB-ul - nu a fost găsit la ${found.name}`
+                };
+            }
+        }
+        return {
+            success: false,
+            awb: awb,
+            error: `Curierul "${specifiedCourier}" nu este suportat`,
+            supported: couriers.map(c => c.name)
+        };
+    }
+    
+    // Dacă nu s-a specificat, încearcă toți
     for (const courier of couriers) {
         try {
             const result = await courier.func(awb);
@@ -65,16 +130,16 @@ async function trackAll(awb) {
     return {
         success: false,
         awb: awb,
-        courier: 'Necunoscut',
-        status: 'Negăsit',
-        events: [],
-        lastUpdate: new Date().toISOString()
+        error: 'AWB negăsit la niciun curier',
+        hint: 'Verifică numărul AWB sau specifică curierul (ex: ?courier=sameday)',
+        supported: couriers.map(c => c.name)
     };
 }
 
 // ==========================================
-// FUNCȚIA - Tracking Sameday (API oficial)
+// FUNCȚIILE DE TRACKING
 // ==========================================
+
 async function trackSameday(awb) {
     const url = `https://www.sameday.ro/api/awb/${awb}/status`;
     const response = await axios.get(url, { timeout: 15000 });
@@ -98,9 +163,6 @@ async function trackSameday(awb) {
     };
 }
 
-// ==========================================
-// FUNCȚIA - Tracking Fan Courier (scraping)
-// ==========================================
 async function trackFan(awb) {
     const url = `https://www.fancourier.ro/awb-online/?awb=${awb}`;
     const response = await axios.get(url, { timeout: 15000 });
@@ -124,9 +186,6 @@ async function trackFan(awb) {
     };
 }
 
-// ==========================================
-// FUNCȚIA - Tracking Cargus (scraping)
-// ==========================================
 async function trackCargus(awb) {
     const url = `https://www.cargus.ro/ro/track-trace?awb=${awb}`;
     const response = await axios.get(url, { timeout: 15000 });
@@ -150,9 +209,6 @@ async function trackCargus(awb) {
     };
 }
 
-// ==========================================
-// FUNCȚIA - Tracking DPD (scraping)
-// ==========================================
 async function trackDpd(awb) {
     const url = `https://www.dpd.ro/parcel-tracking?parcelNumber=${awb}`;
     const response = await axios.get(url, { timeout: 15000 });
@@ -184,31 +240,28 @@ app.get('/health', (req, res) => {
         status: 'ok',
         timestamp: new Date().toISOString(),
         service: 'Tracking API',
-        version: '1.0.0'
+        version: '1.0.0',
+        supported: ['Sameday', 'Fan Courier', 'Cargus', 'DPD']
     });
 });
 
-// ==========================================
-// ENDPOINT - Pagina principală
-// ==========================================
 app.get('/', (req, res) => {
     res.json({
         service: 'Tracking API România',
         version: '1.0.0',
         endpoints: {
             '/track/{awb}': 'Tracking AWB (GET)',
-            '/health': 'Health check (GET)',
-            '/': 'This page (GET)'
+            '/track/{awb}?courier=sameday': 'Tracking cu curier specificat',
+            '/track': 'Tracking cu POST (body: {awb, courier})',
+            '/health': 'Health check'
         },
-        couriers: ['Sameday', 'Fan Courier', 'Cargus', 'DPD']
+        couriers: ['Sameday', 'Fan Courier', 'Cargus', 'DPD'],
+        example: '/track/RO123456789?courier=sameday'
     });
 });
 
-// ==========================================
-// PORNIRE SERVER
-// ==========================================
 app.listen(PORT, () => {
     console.log(`🚀 Server tracking rulează pe port ${PORT}`);
-    console.log(`📦 Endpoint: /track/{awb}`);
+    console.log(`📦 Endpoint: /track/{awb}?courier=sameday`);
     console.log(`🔗 Health: /health`);
 });
